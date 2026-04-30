@@ -24,10 +24,20 @@ weekly_stress_table = build_weekly_stress_table(
     baseline_end="2019-12-31"      # ← FRONTEND CONTROL LATER
 )
 
+# ---- Latest weekly stress per chokepoint ----
+latest_stress = (
+    weekly_stress_table
+        .sort_values(["portname", "period_start"])
+        .groupby("portname", as_index=False)
+        .tail(1)
+        .reset_index(drop=True)
+)
+
 # ---- Temporary display for verification ----
 st.subheader("Chokepoint Profile Table")
 st.dataframe(profile_table.head())
 
 st.subheader("Weekly Stress Table (sample)")
 st.dataframe(weekly_stress_table.head())
+
 
