@@ -3,6 +3,7 @@ import streamlit as st
 from data.portwatch_api import load_portwatch_data
 from data.profile_table import build_chokepoint_profile
 from data.stress_table import build_weekly_stress_table
+import plotly.express as px
 
 st.set_page_config(layout="wide")
 
@@ -74,15 +75,33 @@ current_state_geo = (
         )
 )
 
-st.subheader("Current Chokepoint State + Geolocation (Validation)")
-st.dataframe(
-    current_state_geo[[
-        "portname",
-        "lat",
-        "lon",
-        "exposure_type",
-        "dominant_vessel_type",
-        "n_total_index",
-        "capacity_index",
-    ]].sort_values("portname")
+# ---- STEP 5: Stress-encoded chokepoint map ----
+
+fig = px.scatter_map(
+    current_state_geo,
+    lat="lat",
+    lon="lon",
+    hover_name="portname",
+    hover_data={
+        "exposure_type": True,
+        "dominant_vessel_type": True,
+        "dominance_strength": True,
+        "n_total_index": ":.2f",
+        "capacity_index": ":.2f",
+        "n_total_volatility": ":.2f",
+    },
+    color="capacity_index",
+    color_continuous_scale="RdYlGn_r",
+    range_color=(0.4, 1.2),  # anchors interpretation
+    size=(current_state_geo["capacity_index"] - 1).abs(),
+    size_max=30,
+    zoom=1,
+    height=600,
 )
+
+fig.update_layout(
+    margin={"r": 0, "t": 0, "l": 0, "b": 0}
+)
+
+st.subheader("Global Chokepoint Stress Map (Capacity-Based)")
+st.plotly_chart(fig, use_container_width=True)
