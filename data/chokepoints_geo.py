@@ -1,13 +1,12 @@
 # data/chokepoints_geo.py
 
-# data/chokepoints_geo.py
-
 import pandas as pd
+
 
 def load_chokepoint_locations() -> pd.DataFrame:
     """
-    Static latitude / longitude for PortWatch chokepoints.
-    Approximate centroids for visualisation purposes.
+    Static lat/lon centroids for PortWatch chokepoints.
+    Approximate; intended for visualisation only.
     """
 
     data = [
@@ -46,8 +45,6 @@ def load_chokepoint_locations() -> pd.DataFrame:
         ("Kerch Strait", 45.300, 36.500),
 
         ("Cape of Good Hope", -34.350, 18.470),
-        ("Strait of Hormuz - East", 25.500, 57.000),  # optional alias if needed
     ]
 
-    df = pd.DataFrame(data, columns=["portname", "lat", "lon"])
-    return df
+    return pd.DataFrame(data, columns=["portname", "lat", "lon"])

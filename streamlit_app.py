@@ -34,10 +34,55 @@ latest_stress = (
 )
 
 # ---- Temporary display for verification ----
-st.subheader("Chokepoint Profile Table")
-st.dataframe(profile_table.head())
+# st.subheader("Chokepoint Profile Table")
+# st.dataframe(profile_table.head())
 
-st.subheader("Weekly Stress Table (sample)")
-st.dataframe(weekly_stress_table.head())
+# st.subheader("Weekly Stress Table (sample)")
+# st.dataframe(weekly_stress_table.head())
 
+# ----  Build current (latest) state per chokepoint ----
 
+# Get latest weekly row per chokepoint
+latest_stress = (
+    weekly_stress_table
+        .sort_values(["portname", "period_start"])
+        .groupby("portname", as_index=False)
+        .tail(1)
+        .reset_index(drop=True)
+)
+
+# Merge with profile table
+current_state_table = (
+    profile_table
+        .merge(
+            latest_stress,
+            on=["portid", "portname"],
+            how="inner"
+        )
+)
+
+from data.chokepoints_geo import load_chokepoint_locations
+
+geo_df = load_chokepoint_locations()
+
+current_state_geo = (
+    current_state_table
+        .merge(
+            geo_df,
+            on="portname",
+            how="left"
+        )
+)
+
+st.subheader("Current Chokepoint State + Geolocation (Validation)")
+st.dataframe(
+    current_state_geo[[
+        "portname",
+        "lat",
+        "lon",
+        "exposure_type",
+        "dominant_vessel_type",
+        "n_total_index",
+        "capacity_index",
+    ]].sort_values("portname")
+)
