@@ -1,107 +1,214 @@
-
 import streamlit as st
+import pandas as pd
+import plotly.express as px
+
 from data.portwatch_api import load_portwatch_data
 from data.profile_table import build_chokepoint_profile
 from data.stress_table import build_weekly_stress_table
-import plotly.express as px
+from data.chokepoints_geo import load_chokepoint_locations
 
-st.set_page_config(layout="wide")
+
+# ============================================================
+# App configuration
+# ============================================================
+
+st.set_page_config(
+    page_title="Global Maritime Chokepoint Monitoring",
+    layout="wide",
+)
 
 st.title("Global Maritime Chokepoint Monitoring")
 
-# ---- Data load (cached) ----
+
+# ============================================================
+# Data loading (cached)
+# ============================================================
+
 @st.cache_data(ttl=86400)
 def load_data():
+    """Load raw PortWatch chokepoint data (cached)."""
     return load_portwatch_data()
 
 df = load_data()
 
-# ---- Build tables ----
+
+# ============================================================
+# Build analytical tables
+# ============================================================
+
 profile_table = build_chokepoint_profile(df)
 
 weekly_stress_table = build_weekly_stress_table(
     df,
-    baseline_start="2019-01-01",   # ← FRONTEND CONTROL LATER
-    baseline_end="2019-12-31"      # ← FRONTEND CONTROL LATER
+    baseline_start="2019-01-01",
+    baseline_end="2019-12-31",
 )
 
-# ---- Latest weekly stress per chokepoint ----
+
+# ============================================================
+# Latest state per chokepoint
+# ============================================================
+
 latest_stress = (
     weekly_stress_table
-        .sort_values(["portname", "period_start"])
-        .groupby("portname", as_index=False)
-        .tail(1)
-        .reset_index(drop=True)
+    .sort_values(["portname", "period_start"])
+    .groupby("portname", as_index=False)
+    .tail(1)
+    .reset_index(drop=True)
 )
 
-# ---- Temporary display for verification ----
-# st.subheader("Chokepoint Profile Table")
-# st.dataframe(profile_table.head())
-
-# st.subheader("Weekly Stress Table (sample)")
-# st.dataframe(weekly_stress_table.head())
-
-# ----  Build current (latest) state per chokepoint ----
-
-# Get latest weekly row per chokepoint
-latest_stress = (
-    weekly_stress_table
-        .sort_values(["portname", "period_start"])
-        .groupby("portname", as_index=False)
-        .tail(1)
-        .reset_index(drop=True)
-)
-
-# Merge with profile table
-current_state_table = (
+current_state = (
     profile_table
-        .merge(
-            latest_stress,
-            on=["portid", "portname"],
-            how="inner"
-        )
+    .merge(latest_stress, on=["portid", "portname"], how="inner")
 )
 
-from data.chokepoints_geo import load_chokepoint_locations
+
+# ============================================================
+# Add geolocation
+# ============================================================
 
 geo_df = load_chokepoint_locations()
 
-current_state_geo = (
-    current_state_table
-        .merge(
-            geo_df,
-            on="portname",
-            how="left"
-        )
+current_state = current_state.merge(
+    geo_df, on="portname", how="left"
 )
 
-# ---- STEP 5: Stress-encoded chokepoint map ----
+
+# ============================================================
+# Stress derivation (capacity-based)
+# ============================================================
+
+# Continuous stress magnitude
+current_state["capacity_stress"] = (
+    1 - current_state["capacity_index"]
+).clip(lower=0)
+
+
+def stress_band(stress: float) -> str:
+    """Map continuous stress into categorical risk bands."""
+    if stress < 0.15:
+        return "Neutral"
+    elif stress < 0.30:
+        return "Watch"
+    elif stress < 0.50:
+        return "Stressed"
+    else:
+        return "Severe"
+
+
+current_state["stress_band"] = current_state["capacity_stress"].apply(stress_band)
+
+# Explicit category order (IMPORTANT)
+stress_order = ["Severe", "Stressed", "Watch", "Neutral"]
+
+current_state["stress_band"] = pd.Categorical(
+    current_state["stress_band"],
+    categories=stress_order,
+    ordered=True,
+)
+
+# Human-readable tooltip label
+current_state["capacity_stress_label"] = (
+    (current_state["capacity_stress"] * 100)
+    .round(0)
+    .astype(int)
+    .astype(str)
+    + "% capacity reduction"
+)
+
+# Dampened size scaling (visual balance)
+current_state["stress_size"] = (
+    current_state["capacity_stress"]
+    .clip(lower=0.15)
+    .pow(0.6)
+)
+
+# ------------------------------------------------------------
+# Human-readable tooltip fields (presentation layer)
+# ------------------------------------------------------------
+
+# More descriptive stress wording (what the user sees)
+stress_band_full_map = {
+    "Severe": "Severely stressed",
+    "Stressed": "Stressed",
+    "Watch": "Watch (mild stress)",
+    "Neutral": "Operating normally",
+}
+
+current_state["stress_band_full"] = current_state["stress_band"].astype(str).map(stress_band_full_map)
+
+# Human-readable stress percent
+current_state["stress_pct"] = (current_state["capacity_stress"] * 100).round(0).astype(int)
+
+# Human-readable “mostly passes through here” text
+exposure_label_map = {
+    "Energy": "Mostly: Energy flows",
+    "Trade": "Mostly: Trade flows",
+    "Mixed": "Mostly: Mixed flows (energy + trade)",
+}
+current_state["exposure_human"] = current_state["exposure_type"].map(exposure_label_map).fillna("Mostly: Trade flows")
+
+# Human-readable vessel dominance
+current_state["dominant_vessel_human"] = (
+    "Most ships: " + current_state["dominant_vessel_type"].astype(str).str.title()
+)
+
+# Human-readable size explanation (prevents confusion)
+current_state["size_human"] = "Marker size: magnitude of stress (scaled)"
+
+
+# ------------------------------------------------------------
+# Stress-encoded chokepoint map (with custom tooltip)
+# ------------------------------------------------------------
 
 fig = px.scatter_map(
-    current_state_geo,
+    current_state,
     lat="lat",
     lon="lon",
-    hover_name="portname",
-    hover_data={
-        "exposure_type": True,
-        "dominant_vessel_type": True,
-        "dominance_strength": True,
-        "n_total_index": ":.2f",
-        "capacity_index": ":.2f",
-        "n_total_volatility": ":.2f",
+    color="stress_band",
+    category_orders={"stress_band": stress_order},
+    color_discrete_map={
+        "Neutral": "#6f9460",
+        "Watch":   "#f1c40f",
+        "Stressed":"#e67e22",
+        "Severe":  "#e74c3c",
     },
-    color="capacity_index",
-    color_continuous_scale="RdYlGn_r",
-    range_color=(0.4, 1.2),  # anchors interpretation
-    size=(current_state_geo["capacity_index"] - 1).abs(),
-    size_max=30,
-    zoom=1,
-    height=600,
+    size="stress_size",
+    size_max=35,
+    zoom=1.8,
+    height=620,
+    # Pass extra fields for the tooltip
+    custom_data=[
+        "portname",
+        "stress_band_full",
+        "stress_pct",
+        "capacity_stress_label",
+        "exposure_human",
+        "dominant_vessel_human",
+        "size_human",
+    ],
+)
+
+# Custom tooltip using customdata (clean, fully controlled)
+fig.update_traces(
+    hovertemplate=(
+        "<b>%{customdata[0]}</b><br>"
+        "%{customdata[1]}<br><br>"
+        "<b>Current stress:</b> %{customdata[2]}% (%{customdata[3]})<br>"
+        "<b>Flow profile:</b> %{customdata[4]}<br>"
+        "<b>Dominant traffic:</b> %{customdata[5]}<br>"
+        "<b>%{customdata[6]}</b>"
+        "<extra></extra>"
+    )
 )
 
 fig.update_layout(
-    margin={"r": 0, "t": 0, "l": 0, "b": 0}
+    margin=dict(l=0, r=0, t=0, b=0),
+    legend_title_text="Stress level",
+    map_center=dict(lat=15, lon=20),
+    map_zoom=1.8,
 )
 
-st.subheader("Global Chokepoint Stress Map (Capacity-Based)")
-st.plotly_chart(fig, use_container_width=True)
+st.subheader("Global Chokepoint Stress Map")
+st.caption("Colour shows stress severity (thresholded). Size reflects magnitude of capacity disruption.")
+st.plotly_chart(fig, width="stretch")
