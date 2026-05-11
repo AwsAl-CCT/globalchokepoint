@@ -29,6 +29,7 @@ def load_data():
     """Load raw PortWatch chokepoint data (cached)."""
     return load_portwatch_data()
 
+
 df = load_data()
 
 
@@ -70,7 +71,9 @@ current_state = (
 geo_df = load_chokepoint_locations()
 
 current_state = current_state.merge(
-    geo_df, on="portname", how="left"
+    geo_df,
+    on="portname",
+    how="left"
 )
 
 
@@ -78,18 +81,20 @@ current_state = current_state.merge(
 # Stress derivation (capacity-based)
 # ============================================================
 
-# Continuous stress magnitude
+# Continuous stress magnitude relative to baseline
 current_state["capacity_stress"] = (
     1 - current_state["capacity_index"]
 ).clip(lower=0)
 
 
 def stress_band(stress: float) -> str:
-    """Map continuous stress into categorical risk bands."""
+    """
+    Map continuous stress into categorical risk bands.
+    """
     if stress < 0.15:
         return "Neutral"
     elif stress < 0.30:
-        return "Watch"
+        return "Slightly stressed"
     elif stress < 0.50:
         return "Stressed"
     else:
@@ -98,8 +103,8 @@ def stress_band(stress: float) -> str:
 
 current_state["stress_band"] = current_state["capacity_stress"].apply(stress_band)
 
-# Explicit category order (IMPORTANT)
-stress_order = ["Severe", "Stressed", "Watch", "Neutral"]
+# Explicit category order for filters and visual encoding
+stress_order = ["Severe", "Stressed", "Slightly stressed", "Neutral"]
 
 current_state["stress_band"] = pd.Categorical(
     current_state["stress_band"],
@@ -107,71 +112,74 @@ current_state["stress_band"] = pd.Categorical(
     ordered=True,
 )
 
-# Human-readable tooltip label
-current_state["capacity_stress_label"] = (
-    (current_state["capacity_stress"] * 100)
-    .round(0)
-    .astype(int)
-    .astype(str)
-    + "% capacity reduction"
-)
 
-# Dampened size scaling (visual balance)
-current_state["stress_size"] = (
-    current_state["capacity_stress"]
-    .clip(lower=0.15)
-    .pow(0.6)
-)
+# ============================================================
+# Human-readable fields for tooltips
+# ============================================================
 
-# ------------------------------------------------------------
-# Human-readable tooltip fields (presentation layer)
-# ------------------------------------------------------------
-
-# More descriptive stress wording (what the user sees)
+# More descriptive stress wording
 stress_band_full_map = {
     "Severe": "Severely stressed",
     "Stressed": "Stressed",
-    "Watch": "Watch (mild stress)",
+    "Slightly stressed": "Slightly stressed",
     "Neutral": "Operating normally",
 }
 
-current_state["stress_band_full"] = current_state["stress_band"].astype(str).map(stress_band_full_map)
+current_state["stress_band_full"] = (
+    current_state["stress_band"]
+    .astype(str)
+    .map(stress_band_full_map)
+)
 
-# Human-readable stress percent
-current_state["stress_pct"] = (current_state["capacity_stress"] * 100).round(0).astype(int)
+# Human-readable stress percentage
+current_state["stress_pct"] = (
+    current_state["capacity_stress"] * 100
+).round(0).astype(int)
 
-# Human-readable “mostly passes through here” text
+# Human-readable “mostly passes through here” label
 exposure_label_map = {
     "Energy": "Mostly: Energy flows",
     "Trade": "Mostly: Trade flows",
     "Mixed": "Mostly: Mixed flows (energy + trade)",
 }
-current_state["exposure_human"] = current_state["exposure_type"].map(exposure_label_map).fillna("Mostly: Trade flows")
+
+current_state["exposure_human"] = (
+    current_state["exposure_type"]
+    .map(exposure_label_map)
+    .fillna("Mostly: Trade flows")
+)
 
 # Human-readable vessel dominance
 current_state["dominant_vessel_human"] = (
     "Most ships: " + current_state["dominant_vessel_type"].astype(str).str.title()
 )
 
-# Human-readable size explanation (prevents confusion)
-current_state["size_human"] = "Marker size: magnitude of stress (scaled)"
+# Human-readable stress label
+current_state["capacity_stress_label"] = (
+    current_state["stress_pct"].astype(str) + "% capacity reduction"
+)
 
-# ------------------------------------------------------------
-# Estimated magnitude of capacity disruption (for marker size explanation)
-# ------------------------------------------------------------
 
-# Avoid division errors
+# ============================================================
+# Estimated magnitude of capacity disruption (for size tooltip)
+# ============================================================
+
+# Estimated baseline capacity implied by current state and capacity index
 current_state["baseline_capacity_est"] = (
     current_state["capacity"] / current_state["capacity_index"]
 ).where(current_state["capacity_index"] > 0)
 
+# Estimated disrupted capacity
 current_state["disrupted_capacity_est"] = (
     current_state["baseline_capacity_est"] * current_state["capacity_stress"]
 )
 
-# Human-readable size label (billions / millions, rounded)
 
 def format_capacity(value):
+    """
+    Format estimated weekly impacted capacity for tooltip readability.
+    Keeps the user-defined wording style.
+    """
     if pd.isna(value):
         return "not available"
     if value >= 1_000_000_000:
@@ -181,29 +189,96 @@ def format_capacity(value):
     else:
         return f"~{value:,.0f} units"
 
+
 current_state["size_human"] = current_state["disrupted_capacity_est"].apply(format_capacity)
 
+
+# ============================================================
+# Marker sizing (visual balancing only)
+# ============================================================
+
+current_state["stress_size"] = (
+    current_state["capacity_stress"]
+    .clip(lower=0.15)
+    .pow(0.6)
+)
+
+
+# ============================================================
+# Layout: map + explanatory / control column
+# ============================================================
+
+map_col, info_col = st.columns([4.5, 1.5], gap="large")
+
+
 # ------------------------------------------------------------
-# Stress-encoded chokepoint map (with custom tooltip)
+# Right-column controls and explanatory text
+# NOTE:
+# Controls are defined BEFORE the figure so they can be used
+# to filter the map data.
 # ------------------------------------------------------------
 
+with info_col:
+    # Spacer to align content visually with the map body
+    st.markdown("<br><br><br><br>", unsafe_allow_html=True)
+
+    st.markdown("### Filter stress levels")
+
+    stress_filters = {
+        "Severe": st.checkbox("Severe", value=True, key="filter_severe"),
+        "Stressed": st.checkbox("Stressed", value=True, key="filter_stressed"),
+        "Slightly stressed": st.checkbox("Slightly stressed", value=True, key="filter_slightly_stressed"),
+        "Neutral": st.checkbox("Neutral", value=True, key="filter_neutral"),
+    }
+
+    st.markdown("#### How to use this map")
+    st.markdown(
+        "*Use the checkboxes above to focus on specific stress levels.*"
+    )
+
+    st.markdown("---")
+
+    st.markdown("#### Baseline definition")
+    st.markdown(
+        "Normal conditions are defined using **average weekly maritime capacity "
+        "observed during 2019**, a pre‑disruption reference year before COVID‑19, "
+        "major canal restrictions, and recent geopolitical conflicts."
+    )
+
+
+# ============================================================
+# Apply stress-level filters
+# ============================================================
+
+active_stress_levels = [
+    level for level, enabled in stress_filters.items() if enabled
+]
+
+filtered_state = current_state[
+    current_state["stress_band"].isin(active_stress_levels)
+].copy()
+
+
+# ============================================================
+# Build stress-encoded chokepoint map
+# ============================================================
+
 fig = px.scatter_map(
-    current_state,
+    filtered_state,
     lat="lat",
     lon="lon",
     color="stress_band",
     category_orders={"stress_band": stress_order},
     color_discrete_map={
-        "Neutral": "#6f9460",
-        "Watch":   "#f1c40f",
-        "Stressed":"#e67e22",
-        "Severe":  "#e74c3c",
+        "Neutral": "#6f9460",            # light green / healthy
+        "Slightly stressed": "#f1c40f",  # yellow
+        "Stressed": "#e67e22",           # orange
+        "Severe": "#e74c3c",             # red
     },
     size="stress_size",
     size_max=35,
     zoom=1.8,
     height=620,
-    # Pass extra fields for the tooltip
     custom_data=[
         "portname",
         "stress_band_full",
@@ -215,7 +290,7 @@ fig = px.scatter_map(
     ],
 )
 
-# Custom tooltip using customdata (clean, fully controlled)
+# Fully controlled tooltip
 fig.update_traces(
     hovertemplate=(
         "<b>%{customdata[0]}</b><br>"
@@ -233,9 +308,22 @@ fig.update_layout(
     legend_title_text="Stress level",
     map_center=dict(lat=15, lon=20),
     map_zoom=1.8,
+    showlegend=False,   # native legend replaced by Streamlit filter controls
 )
 
-st.subheader("Global Chokepoint Stress Map")
-st.caption("Colour shows stress severity (thresholded). Size reflects magnitude of capacity disruption.")
 
-st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+# ============================================================
+# Render map
+# ============================================================
+
+with map_col:
+    st.subheader("Global Chokepoint Stress Map")
+    st.caption(
+        "**Colour:** severity of disruption relative to normal conditions.  "
+        "**Size:** estimated weekly capacity impact."
+    )
+    st.plotly_chart(
+        fig,
+        width="stretch",
+        config={"displayModeBar": False}
+    )
