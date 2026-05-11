@@ -156,6 +156,32 @@ current_state["dominant_vessel_human"] = (
 # Human-readable size explanation (prevents confusion)
 current_state["size_human"] = "Marker size: magnitude of stress (scaled)"
 
+# ------------------------------------------------------------
+# Estimated magnitude of capacity disruption (for marker size explanation)
+# ------------------------------------------------------------
+
+# Avoid division errors
+current_state["baseline_capacity_est"] = (
+    current_state["capacity"] / current_state["capacity_index"]
+).where(current_state["capacity_index"] > 0)
+
+current_state["disrupted_capacity_est"] = (
+    current_state["baseline_capacity_est"] * current_state["capacity_stress"]
+)
+
+# Human-readable size label (billions / millions, rounded)
+
+def format_capacity(value):
+    if pd.isna(value):
+        return "not available"
+    if value >= 1_000_000_000:
+        return f"~{value/1_000_000_000:.1f} billion units"
+    elif value >= 1_000_000:
+        return f"~{value/1_000_000:.0f} million units"
+    else:
+        return f"~{value:,.0f} units"
+
+current_state["size_human"] = current_state["disrupted_capacity_est"].apply(format_capacity)
 
 # ------------------------------------------------------------
 # Stress-encoded chokepoint map (with custom tooltip)
@@ -197,7 +223,7 @@ fig.update_traces(
         "<b>Current stress:</b> %{customdata[2]}% (%{customdata[3]})<br>"
         "<b>Flow profile:</b> %{customdata[4]}<br>"
         "<b>Dominant traffic:</b> %{customdata[5]}<br>"
-        "<b>%{customdata[6]}</b>"
+        "<b>Estimated weekly impact:</b> %{customdata[6]}"
         "<extra></extra>"
     )
 )
@@ -211,4 +237,5 @@ fig.update_layout(
 
 st.subheader("Global Chokepoint Stress Map")
 st.caption("Colour shows stress severity (thresholded). Size reflects magnitude of capacity disruption.")
-st.plotly_chart(fig, width="stretch")
+
+st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
