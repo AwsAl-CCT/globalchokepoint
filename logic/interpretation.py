@@ -180,8 +180,19 @@ def build_interpretation(row: pd.Series) -> Dict[str, Any]:
     if exposure_human:
         cards.append({"label": "Flow profile", "value": exposure_human.replace("Mostly: ", "")})
 
+
     if dominant_vessel_human:
-        cards.append({"label": "Dominant traffic", "value": dominant_vessel_human.replace("Most ships: ", "")})
+        dominance_strength = row.get("dominance_strength", "")
+
+        value = dominant_vessel_human.replace("Most ships are ", "")
+
+        if dominance_strength:
+            value = f"{value} ({dominance_strength})"
+
+        cards.append({
+            "label": "Dominant vessel type",
+            "value": value
+        })
 
     cards.append({"label": "Estimated weekly impact", "value": size_human})
 

@@ -8,6 +8,7 @@ from data.stress_table import build_weekly_stress_table
 from data.chokepoints_geo import load_chokepoint_locations
 from logic.interpretation import build_interpretation
 
+
 # ============================================================
 # App configuration
 # ============================================================
@@ -16,6 +17,15 @@ st.set_page_config(
     page_title="Global Maritime Chokepoint Monitoring",
     layout="wide",
 )
+
+st.markdown("""
+    <style>
+        .block-container {
+            padding-top: 1rem;
+            padding-bottom: 1rem;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
 st.title("Global Maritime Chokepoint Monitoring")
 
@@ -121,18 +131,18 @@ current_state["stress_band_full"] = current_state["stress_band"].map({
 })
 
 current_state["exposure_human"] = current_state["exposure_type"].map({
-    "Energy": "Mostly: Energy flows",
-    "Trade": "Mostly: Trade flows",
-    "Mixed": "Mostly: Mixed flows (energy + trade)",
-}).fillna("Mostly: Trade flows")
+    "Energy": "Mostly Energy flows",
+    "Trade": "Mostly Trade flows",
+    "Mixed": "Mostly Mixed flows (Energy + Trade)",
+}).fillna("Mostly Trade flows")
 
 current_state["dominant_vessel_human"] = (
-    "Most ships: " + current_state["dominant_vessel_type"].astype(str).str.title()
+    "Most ships are " + current_state["dominant_vessel_type"].astype(str).str.title()
 )
 
 
 # ============================================================
-# Capacity impact estimate (tooltip + interpretation)
+# Capacity impact estimate
 # ============================================================
 
 current_state["baseline_capacity_est"] = (
@@ -176,7 +186,7 @@ map_col, info_col = st.columns([4.5, 1.5], gap="large")
 with info_col:
     st.markdown("<br><br><br>", unsafe_allow_html=True)
 
-    st.markdown("### Focus on a chokepoint")
+    # st.markdown("### Select a chokepoint")
 
     selected_chokepoint = st.selectbox(
         "Select a chokepoint",
@@ -185,29 +195,46 @@ with info_col:
         placeholder="Search for a chokepoint…",
     )
 
-    st.markdown("### Filter stress levels")
+    st.markdown("Stress levels", help="Stress is measured relative to normal (2019 baseline). Higher stress means the chokepoint is operating further below its typical capacity.")
+
+    # st.caption("Stress levels", help="Stress is measured relative to normal (2019 baseline). Higher stress means the chokepoint is operating further below its typical capacity.")
+
 
     stress_filters = {
         level: st.checkbox(level, value=True, key=f"filter_{level}")
         for level in stress_order
     }
 
+    # message placeholder (right under checkboxes)
+    stress_message = st.empty()
+
     st.markdown("---")
 
     st.markdown("#### Baseline definition")
     st.markdown(
-        "Normal conditions are defined using **average weekly maritime capacity "
-        "observed during 2019**, a pre‑disruption reference year."
+        
+"Normal conditions are defined using average weekly maritime capacity observed during 2019. "
+    "This reference year reflects typical global shipping patterns before COVID-19 disruptions, "
+    "major canal capacity constraints, and recent geopolitical shocks that have since affected key routes."
     )
 
 
 # ============================================================
-# Apply stress filters
+# Apply stress filters (guard)
 # ============================================================
 
 active_stress_levels = [
     level for level, enabled in stress_filters.items() if enabled
 ]
+
+if not active_stress_levels:
+    active_stress_levels = stress_order.copy()
+    stress_message.info(
+        "At least one stress level must be selected. Showing all stress levels."
+    )
+else:
+    stress_message.empty()
+
 
 filtered_state = current_state[
     current_state["stress_band"].isin(active_stress_levels)
@@ -215,7 +242,7 @@ filtered_state = current_state[
 
 
 # ============================================================
-# Guarded chokepoint focus logic
+# Focus logic
 # ============================================================
 
 selection_active = selected_chokepoint is not None
@@ -241,7 +268,7 @@ else:
 
 
 # ============================================================
-# Build map
+# Build map (clean)
 # ============================================================
 
 fig = px.scatter_map(
@@ -289,34 +316,47 @@ fig.update_layout(
     showlegend=False,
 )
 
+
 with map_col:
     st.subheader("Global Chokepoint Stress Map")
+
     st.caption(
-        "**Colour:** severity of disruption relative to normal conditions.  "
-        "**Size:** estimated weekly capacity impact."
+        "Colour shows disruption severity. Size shows estimated capacity impact.",
+        help="Colour indicates how far the chokepoint is operating below normal conditions. Size reflects the estimated volume of disrupted capacity, not just the number of ships."
     )
+
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 # ============================================================
-# Interpretation panel (protected)
+# Insights panel
 # ============================================================
 
-st.markdown("---")
+st.markdown("""
+<style>
+[data-testid="stMetricValue"] {
+    font-size: 16px;
+}
+[data-testid="stMetricLabel"] {
+    font-size: 12px;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 if selection_active and selection_visible:
-    cp_row = focused_state.iloc[0]
 
+    cp_row = focused_state.iloc[0]
     result = build_interpretation(cp_row)
 
-    st.subheader(f"Interpretation: {selected_chokepoint}")
+    st.subheader(f"Insights: {selected_chokepoint}")
+
     st.markdown(result["paragraph"])
 
-    # Info cards under the interpretation (compact reinforcement)
-    st.markdown("#### Key signals")
+    st.markdown("#### Key signals", help="Traffic refers to the number of ships passing through. Capacity reflects how much cargo those ships carry. Differences between the two can indicate changes in vessel size or loading.")
+    
     cards = result["cards"]
 
-    # Render cards in rows of 3 for clean layout
     for i in range(0, len(cards), 3):
         cols = st.columns(3)
         for col, card in zip(cols, cards[i:i+3]):
@@ -325,9 +365,8 @@ if selection_active and selection_visible:
 
 elif selection_active and not selection_visible:
     st.info(
-        f"**{selected_chokepoint}** is currently hidden by the selected stress filters. "
-        "Enable its stress level to view the interpretation."
+        f"{selected_chokepoint} is currently hidden by the selected stress filters."
     )
 
 else:
-    st.info("Select a chokepoint to view a detailed interpretation.")
+    st.info("Select a chokepoint to view insights.")
