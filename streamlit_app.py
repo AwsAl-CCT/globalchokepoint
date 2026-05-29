@@ -103,13 +103,23 @@ def stress_band(stress):
         return "Severe"
 
 
+
 stress_order = ["Severe", "Stressed", "Slightly stressed", "Neutral"]
 
+# Compute stress band
+current_state["stress_band"] = current_state["capacity_stress"].apply(stress_band)
+
+# Determine which categories actually appear
+actual = current_state["stress_band"].unique()
+
+# Keep your intended order, but only for categories that exist
+valid_order = [c for c in stress_order if c in actual]
+
+# Apply safe categorical ordering
 current_state["stress_band"] = (
-    current_state["capacity_stress"]
-    .apply(stress_band)
+    current_state["stress_band"]
     .astype("category")
-    .cat.reorder_categories(stress_order, ordered=True)
+    .cat.set_categories(valid_order, ordered=True)
 )
 
 
